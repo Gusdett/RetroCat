@@ -8,6 +8,8 @@ enum class Stage { EGG, KITTEN, CAT, DEAD }
 
 enum class PetEvent { HATCHED, GREW, POOPED, SICK, DIED, WOKE }
 
+class Alert(val code: String, val delayMs: Long)
+
 enum class Res { OK, FULL, ASLEEP, NOT_SICK, NOT_TIRED, TOO_TIRED, SICK, NO_POOP, UNAVAILABLE }
 
 /**
@@ -24,6 +26,7 @@ class Pet {
         const val SICK_DEATH = 30 * 60f      // 30 minutes sick without medicine
         const val OFFLINE_RATE = 0.5f        // time passes at half speed while the app is closed
         const val OFFLINE_MAX = 3 * 3600f    // and at most 3 hours are simulated
+        const val COATS = 5                  // number of fur colours
     }
 
     var stage = Stage.EGG
@@ -36,6 +39,9 @@ class Pet {
     var sick = false
     var sleeping = false
     var soundOn = true
+    var name = "MIMI"
+    var coat = 0
+    var adopted = false          // false = the adoption screen is shown, the egg's clock is paused
 
     private var poopTimer = 0f
     private var dirtySec = 0f
@@ -51,7 +57,7 @@ class Pet {
     }
 
     fun tick(dt: Float, canDie: Boolean = true) {
-        if (stage == Stage.DEAD) return
+        if (!adopted || stage == Stage.DEAD) return
         totalSec += dt
         stageSec += dt
 
@@ -182,6 +188,7 @@ class Pet {
     }
 
     fun restart() {
+        adopted = false
         stage = Stage.EGG
         stageSec = 0f
         totalSec = 0f
@@ -211,6 +218,9 @@ class Pet {
             .putBoolean("sick", sick)
             .putBoolean("sleeping", sleeping)
             .putBoolean("soundOn", soundOn)
+            .putString("name", name)
+            .putInt("coat", coat)
+            .putBoolean("adopted", adopted)
             .putFloat("poopTimer", poopTimer)
             .putFloat("dirtySec", dirtySec)
             .putFloat("starveSec", starveSec)
@@ -236,6 +246,9 @@ class Pet {
         sick = p.getBoolean("sick", false)
         sleeping = p.getBoolean("sleeping", false)
         soundOn = p.getBoolean("soundOn", true)
+        name = p.getString("name", "MIMI") ?: "MIMI"
+        coat = p.getInt("coat", 0).coerceIn(0, COATS - 1)
+        adopted = p.getBoolean("adopted", true)   // pets saved by version 1.0 were already adopted
         poopTimer = p.getFloat("poopTimer", 0f)
         dirtySec = p.getFloat("dirtySec", 0f)
         starveSec = p.getFloat("starveSec", 0f)
@@ -251,5 +264,53 @@ class Pet {
             left -= d
         }
         onEvent = listener
+    }
+
+    // ---------------------------------------------------------------- notifications
+
+    private fun copy(): Pet {
+        val c = Pet()
+        c.stage = stage; c.stageSec = stageSec; c.totalSec = totalSec
+        c.hunger = hunger; c.happy = happy; c.energy = energy
+        c.poops = poops; c.sick = sick; c.sleeping = sleeping; c.adopted = adopted
+        c.poopTimer = poopTimer; c.dirtySec = dirtySec; c.starveSec = starveSec; c.sickSec = sickSec
+        return c
+    }
+
+    /**
+     * Looks ahead (with the same slow offline clock the game uses while closed) and returns the first
+     * moment the cat will need attention, or null if nothing happens within the offline window.
+     * Needs-alerts are never sooner than 5 minutes so closing the app does not instantly buzz the phone.
+     */
+    fun nextAlert(): Alert? {
+        if (!adopted || stage == Stage.DEAD) return null
+        val sim = copy()
+        var code: String? = null
+        sim.onEvent = { e ->
+            if (code == null) {
+                code = when (e) {
+                    PetEvent.HATCHED -> "HATCH"
+                    PetEvent.SICK -> "SICK"
+                    else -> null
+                }
+            }
+        }
+        var t = 0f
+        val maxSim = OFFLINE_MAX * OFFLINE_RATE
+        while (t < maxSim && code == null) {
+            sim.tick(30f, false)
+            t += 30f
+            if (code == null && sim.alive) {
+                code = when {
+                    sim.hunger < 25f -> "HUNGRY"
+                    sim.poops >= 2 -> "POOP"
+                    sim.happy < 25f -> "LONELY"
+                    else -> null
+                }
+            }
+        }
+        val c = code ?: return null
+        val ms = (t / OFFLINE_RATE * 1000f).toLong()
+        return Alert(c, max(ms, if (c == "HATCH") 30_000L else 5 * 60_000L))
     }
 }

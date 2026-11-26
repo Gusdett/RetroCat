@@ -18,6 +18,8 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
     private class Fish(var x: Float, var y: Float, val vy: Float)
 
     var onSave: (() -> Unit)? = null
+    /** Asks the user for a name (shows an Android dialog) and calls back with the text. */
+    var onAskName: ((String, (String) -> Unit) -> Unit)? = null
 
     // ------------------------------------------------------------- colours
     private fun argb(v: Long) = v.toInt()
@@ -30,7 +32,16 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
 
     private fun mono(fill: Int) = intArrayOf(fill, fill, fill, INK)
 
-    private val palCat = intArrayOf(WHITE, ORANGE, argb(0xFFC96F2B), INK)
+    // fur colours: [belly/cheeks, body, stripes, outline]
+    private val coats = arrayOf(
+        intArrayOf(WHITE, ORANGE, argb(0xFFC96F2B), INK),
+        intArrayOf(WHITE, argb(0xFFB4BBC6), argb(0xFF7A8494), INK),
+        intArrayOf(WHITE, argb(0xFF5E5E6B), argb(0xFF3A3A46), INK),
+        intArrayOf(WHITE, argb(0xFFFAF0DC), argb(0xFFDCC9A6), INK),
+        intArrayOf(WHITE, argb(0xFFB07A50), argb(0xFF7A4E2D), INK),
+    )
+    private val coatNames = arrayOf("ORANGE", "GRAY", "BLACK", "CREAM", "BROWN")
+    private fun palCat() = coats[pet.coat.coerceIn(0, coats.size - 1)]
     private val palEgg = intArrayOf(WHITE, argb(0xFFF4E9D0), argb(0xFFD9C48F), INK)
     private val palGhost = intArrayOf(argb(0xFFE6ECF8), argb(0xFFE6ECF8), argb(0xFFE6ECF8), INK)
     private val palFish = intArrayOf(WHITE, argb(0xFF6FA8DC), argb(0xFF3D6FA3), INK)
@@ -333,6 +344,10 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
     }
 
     private fun down(lx: Float, ly: Float) {
+        if (!pet.adopted) {
+            adoptDown(lx, ly)
+            return
+        }
         val inButtonRow = ly >= btnTop && ly <= btnTop + btnH
 
         if (mode == Mode.CATCH) {
@@ -492,6 +507,11 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
         canvas.translate(ox, oy)
         canvas.scale(scale.toFloat(), scale.toFloat())
 
+        if (!pet.adopted) {
+            drawAdopt(canvas)
+            canvas.restore()
+            return
+        }
         drawHud(canvas)
         drawRoom(canvas)
         drawActors(canvas)
@@ -534,10 +554,13 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
             Stage.CAT -> "CAT"
             Stage.DEAD -> "R.I.P."
         }
-        text(c, label, 4, 27, INK)
         val mins = (pet.totalSec / 60f).toInt()
         val age = if (mins >= 60) "AGE ${mins / 60}H${(mins % 60).toString().padStart(2, '0')}M" else "AGE ${mins}M"
-        text(c, age, W - 18 - textW(age) - 3, 27, MUTED)
+        val ageX = W - 18 - textW(age) - 3
+        text(c, pet.name, 4, 27, INK)
+        val labelX = 4 + textW(pet.name) + 4
+        if (labelX + textW(label) < ageX - 3) text(c, label, labelX, 27, MUTED)
+        text(c, age, ageX, 27, MUTED)
         (if (pet.soundOn) Art.SPK_ON else Art.SPK_OFF).draw(c, W - 14, 26, paint, palInk)
         rect(c, 0, roomTop - 1, W, 1, argb(0xFFE3DCCB))
     }
@@ -653,9 +676,9 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
         val y = petY()
         val flip = dir < 0
         val tail = if ((tickCount / 5) % 2 == 0) set.tailA else set.tailB
-        tail.draw(c, x, y, paint, palCat, flip, 2)
-        set.base.draw(c, x, y, paint, palCat, flip, 2)
-        set.faces[faceIndex()].draw(c, x, y, paint, palCat, flip, 2)
+        tail.draw(c, x, y, paint, palCat(), flip, 2)
+        set.base.draw(c, x, y, paint, palCat(), flip, 2)
+        set.faces[faceIndex()].draw(c, x, y, paint, palCat(), flip, 2)
 
         if (pet.sleeping) {
             val z = (tickCount / 5) % 3
@@ -711,6 +734,93 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
                 else -> MUTED
             }
             text(c, label, x + (22 - textW(label)) / 2, btnTop + 17, color)
+        }
+    }
+
+    // ------------------------------------------------------------- adoption screen
+    private fun cleanName(raw: String): String {
+        val s = raw.uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == ' ' }.trim()
+        return if (s.isEmpty()) "MIMI" else s.take(8)
+    }
+
+    private fun adoptDown(lx: Float, ly: Float) {
+        val panelTop = btnTop - 38
+        if (ly >= panelTop + 4 && ly <= panelTop + 22) {
+            for (i in 0 until Pet.COATS) {
+                val x = 7 + i * 22
+                if (lx >= x && lx <= x + 18) {
+                    pet.coat = i
+                    happyTimer = 8
+                    Chip.play(Snd.BLIP)
+                    return
+                }
+            }
+        }
+        if (ly >= btnTop && ly <= btnTop + btnH) {
+            pressTimer = 2
+            if (lx < 60f) {
+                pressIdx = 0
+                Chip.play(Snd.BLIP)
+                onAskName?.invoke(pet.name, { n -> pet.name = cleanName(n) })
+            } else {
+                pressIdx = 1
+                pet.adopted = true
+                lastMs = System.currentTimeMillis()
+                Chip.play(Snd.HAPPY)
+                say("TAKE GOOD CARE!", 35)
+                onSave?.invoke()
+            }
+            return
+        }
+        if (ly >= panelTop - 66 && ly < panelTop) {
+            Chip.play(Snd.MEOW)
+            happyTimer = 12
+        }
+    }
+
+    private fun drawAdopt(c: Canvas) {
+        val panelTop = btnTop - 38
+        textCenter(c, "ADOPT A KITTY", 6, INK, 2)
+        textCenter(c, "NAME: ${pet.name}", 24, MUTED)
+        drawRoom(c)
+
+        // the kitty to be adopted, big and wagging its tail
+        val set = Art.cat
+        val s = 3
+        val x = (W - set.base.w * s) / 2
+        val y = panelTop - 4 - set.base.h * s
+        Art.BED.draw(c, (W - 48) / 2, panelTop - 10, paint, palRug, false, 2)
+        val face = when {
+            happyTimer > 0 -> Face.HAPPY
+            blinkLen > 0 -> Face.BLINK
+            else -> Face.NEUTRAL
+        }
+        val tail = if ((tickCount / 5) % 2 == 0) set.tailA else set.tailB
+        tail.draw(c, x, y, paint, palCat(), false, s)
+        set.base.draw(c, x, y, paint, palCat(), false, s)
+        set.faces[face].draw(c, x, y, paint, palCat(), false, s)
+
+        // colour picker panel
+        rect(c, 0, panelTop, W, btnTop - 2 - panelTop, BG)
+        rect(c, 0, panelTop, W, 1, INK)
+        for (i in 0 until Pet.COATS) {
+            val sx = 7 + i * 22
+            val sy = panelTop + 4
+            val sel = i == pet.coat
+            rect(c, sx, sy, 18, 18, if (sel) INK else MUTED)
+            val ins = if (sel) 2 else 1
+            rect(c, sx + ins, sy + ins, 18 - 2 * ins, 18 - 2 * ins, coats[i][1])
+            rect(c, sx + 5, sy + 5, 2, 6, coats[i][2])
+            rect(c, sx + 11, sy + 5, 2, 6, coats[i][2])
+        }
+        textCenter(c, coatNames[pet.coat.coerceIn(0, coatNames.size - 1)], panelTop + 26, INK)
+
+        for (k in 0..1) {
+            val x0 = 1 + k * 60
+            val pressed = pressTimer > 0 && pressIdx == k
+            frame(c, x0, btnTop, 59, btnH, if (pressed) INK else WHITE, INK)
+            val lab = if (k == 0) "NAME" else "START"
+            text(c, lab, x0 + (59 - textW(lab, 2)) / 2, btnTop + (btnH - 10) / 2, if (pressed) WHITE else INK, 2)
         }
     }
 
