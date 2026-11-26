@@ -21,6 +21,23 @@ Atau lewat terminal: `./gradlew assembleDebug` → `app/build/outputs/apk/debug/
 - Tap kucing untuk mengelusnya. Tap telur untuk mempercepat menetas.
 - Ikon speaker di kanan atas = suara on/off.
 
+## Intro (layar judul)
+Setiap aplikasi dibuka tampil layar judul **RETRO CAT** dengan kucing yang melompat mengikuti ketukan,
+bintang berkedip, dan lagu chiptune orisinal 4 channel (melodi, arpeggio, bass, drum) sepanjang ±26 detik
+yang berulang sampai layar disentuh. Ikon speaker di pojok kanan atas mematikan/menyalakan musik.
+Lagu ditulis sebagai teks nada di `Song.kt` dan dirender oleh synthesizer kecil (tanpa file audio),
+jadi mudah diubah: tempo (`BPM`), akor (`chords`), dan melodi (`lead`).
+
+## Adopsi (layar awal)
+Saat pertama dibuka (dan setelah NEW EGG) muncul layar **ADOPT A KITTY**: pilih warna bulu
+(oranye, abu-abu, hitam, krem, cokelat), tekan **NAME** untuk memberi nama (maks 8 huruf), lalu **START**.
+Jam telur baru berjalan setelah START.
+
+## Notifikasi
+Saat aplikasi ditutup, game menghitung kapan kucing akan butuh sesuatu (telur menetas, lapar, kotor, sakit,
+kesepian) dan memasang **satu** pengingat pada saat itu (paling cepat 5 menit setelah ditutup).
+Pengingat dibatalkan begitu aplikasi dibuka. Android 13+ meminta izin notifikasi saat pertama dibuka.
+
 ## Siklus hidup
 Telur (1 menit) → Anak kucing (20 menit) → Kucing dewasa.
 - Lapar, bosan, lelah turun seiring waktu nyata. Kotoran yang menumpuk >3 menit membuat kucing sakit.
@@ -31,5 +48,7 @@ Telur (1 menit) → Anak kucing (20 menit) → Kucing dewasa.
 - `Pet.kt` — logika & status, simpan/muat
 - `GameView.kt` — gambar layar, animasi, sentuhan, mini-game
 - `Sprites.kt`, `Font.kt` — pixel art & font 3x5 (digenerate)
+- `Notifier.kt` — pengingat (AlarmManager) + penerima notifikasi
+- `Song.kt` — lagu intro (partitur + synthesizer)
 - `Chip.kt` — synthesizer gelombang kotak untuk efek suara
 - Tuning kecepatan ada di `Pet.kt` (konstanta di `companion object` dan di `tick()`).
