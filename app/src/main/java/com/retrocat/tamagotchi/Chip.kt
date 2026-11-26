@@ -33,34 +33,84 @@ object Chip {
     private val pool = Executors.newCachedThreadPool()
     private val cache = ConcurrentHashMap<Snd, ShortArray>()
 
+    // ---- background music (the title-screen song, looped)
+    private val lock = Any()
+    private var musicTrack: AudioTrack? = null
+    private var musicWanted = false
+
+    @Volatile
+    private var song: ShortArray? = null
+
+    private fun newTrack(samples: Int): AudioTrack =
+        AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(samples * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+
     fun play(s: Snd) {
         if (!enabled) return
         pool.execute {
             try {
                 val pcm = cache.getOrPut(s) { render(s) }
-                val track = AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_GAME)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(RATE)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(pcm.size * 2)
-                    .setTransferMode(AudioTrack.MODE_STATIC)
-                    .build()
+                val track = newTrack(pcm.size)
                 track.write(pcm, 0, pcm.size)
                 track.play()
                 Thread.sleep(pcm.size * 1000L / RATE + 80)
                 track.release()
             } catch (_: Throwable) {
                 // audio is a nice-to-have; never crash the game because of it
+            }
+        }
+    }
+
+    /** Starts the looping title song (rendered once on a background thread, then cached). */
+    fun startMusic() {
+        if (!enabled) return
+        synchronized(lock) {
+            if (musicWanted) return
+            musicWanted = true
+        }
+        pool.execute {
+            try {
+                val pcm = song ?: Song.render(RATE).also { song = it }
+                synchronized(lock) {
+                    if (!musicWanted) return@execute
+                    val t = newTrack(pcm.size)
+                    t.write(pcm, 0, pcm.size)
+                    t.setLoopPoints(0, pcm.size, -1)
+                    t.play()
+                    musicTrack = t
+                }
+            } catch (_: Throwable) {
+                synchronized(lock) { musicWanted = false }
+            }
+        }
+    }
+
+    fun stopMusic() {
+        synchronized(lock) {
+            musicWanted = false
+            val t = musicTrack
+            musicTrack = null
+            if (t != null) {
+                try {
+                    t.stop()
+                } catch (_: Throwable) {
+                }
+                t.release()
             }
         }
     }

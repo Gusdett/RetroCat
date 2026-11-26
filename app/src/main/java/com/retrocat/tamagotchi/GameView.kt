@@ -13,7 +13,7 @@ import kotlin.random.Random
  */
 class GameView(context: Context, private val pet: Pet) : View(context) {
 
-    private enum class Mode { ROOM, CATCH }
+    private enum class Mode { INTRO, ROOM, CATCH }
     private class Heart(var x: Float, var y: Float, var life: Int)
     private class Fish(var x: Float, var y: Float, val vy: Float)
 
@@ -74,7 +74,7 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
         isFilterBitmap = false
         style = Paint.Style.FILL
     }
-    private var mode = Mode.ROOM
+    private var mode = Mode.INTRO   // every launch starts at the title screen
     private var running = false
     private var lastMs = System.currentTimeMillis()
     private var tickCount = 0
@@ -89,6 +89,31 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
     private var eatTimer = 0
     private var wiggle = 0
     private val hearts = ArrayList<Heart>()
+
+    // title screen decoration
+    private val notes = ArrayList<Heart>()
+    private val starX = IntArray(14)
+    private val starY = IntArray(14)
+    private val starPh = IntArray(14)
+    private val noteSprite = Sprite.of(
+        "..#..",
+        "..##.",
+        "..#.#",
+        "..#..",
+        "..#..",
+        ".##..",
+        "###..",
+        ".##..",
+    )
+
+    init {
+        val r = Random(7)
+        for (i in starX.indices) {
+            starX[i] = r.nextInt(7, W - 7)
+            starY[i] = r.nextInt(7, 100)
+            starPh[i] = r.nextInt(3)
+        }
+    }
     private var msg = ""
     private var msgTimer = 0
     private var pressIdx = -1
@@ -116,12 +141,14 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
         if (running) return
         running = true
         lastMs = System.currentTimeMillis()
+        if (mode == Mode.INTRO) Chip.startMusic()
         post(loop)
     }
 
     fun pause() {
         running = false
         removeCallbacks(loop)
+        Chip.stopMusic()
     }
 
     override fun onAttachedToWindow() {
@@ -209,6 +236,19 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
             val h = it.next()
             h.y -= 1.5f
             if (--h.life <= 0) it.remove()
+        }
+
+        if (mode == Mode.INTRO) {
+            if (tickCount % 5 == 0) {
+                notes.add(Heart(W / 2f + Random.nextInt(-26, 22), introFeet() - 64f, 30))
+            }
+            val ni = notes.iterator()
+            while (ni.hasNext()) {
+                val n = ni.next()
+                n.y -= 1.2f
+                n.x += if ((n.life / 4) % 2 == 0) 0.6f else -0.6f
+                if (--n.life <= 0) ni.remove()
+            }
         }
 
         if (pet.stage == Stage.EGG && pet.stageSec > Pet.EGG_SEC * 0.4f && tickCount % 40 == 0) wiggle = 8
@@ -344,6 +384,10 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
     }
 
     private fun down(lx: Float, ly: Float) {
+        if (mode == Mode.INTRO) {
+            introDown(lx, ly)
+            return
+        }
         if (!pet.adopted) {
             adoptDown(lx, ly)
             return
@@ -507,6 +551,11 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
         canvas.translate(ox, oy)
         canvas.scale(scale.toFloat(), scale.toFloat())
 
+        if (mode == Mode.INTRO) {
+            drawIntro(canvas)
+            canvas.restore()
+            return
+        }
         if (!pet.adopted) {
             drawAdopt(canvas)
             canvas.restore()
@@ -735,6 +784,110 @@ class GameView(context: Context, private val pet: Pet) : View(context) {
             }
             text(c, label, x + (22 - textW(label)) / 2, btnTop + 17, color)
         }
+    }
+
+    // ------------------------------------------------------------- intro / title screen
+    private fun introFeet() = maxOf(lh - 56, 158)
+
+    private fun outlineText(c: Canvas, s: String, x: Int, y: Int, color: Int, k: Int, o: Int) {
+        for (dy in -o..o) {
+            for (dx in -o..o) {
+                if (dx != 0 || dy != 0) text(c, s, x + dx, y + dy, INK, k)
+            }
+        }
+        text(c, s, x, y, color, k)
+    }
+
+    private fun introDown(lx: Float, ly: Float) {
+        if (lx >= W - 22 && ly <= 18) {          // speaker switch, top right
+            pet.soundOn = !pet.soundOn
+            Chip.enabled = pet.soundOn
+            if (pet.soundOn) Chip.startMusic() else Chip.stopMusic()
+            return
+        }
+        Chip.stopMusic()
+        Chip.play(Snd.HAPPY)
+        mode = Mode.ROOM
+        notes.clear()
+        onSave?.invoke()
+    }
+
+    private fun drawIntro(c: Canvas) {
+        val feet = introFeet()
+
+        // twinkling stars
+        for (i in starX.indices) {
+            val col = if (i % 2 == 0) argb(0xFFF6C945) else argb(0xFFF4B6B6)
+            val x = starX[i]
+            val y = starY[i]
+            when ((tickCount / 4 + starPh[i]) % 3) {
+                0 -> rect(c, x, y, 1, 1, col)
+                1 -> { rect(c, x - 1, y, 3, 1, col); rect(c, x, y - 1, 1, 3, col) }
+                else -> { rect(c, x - 2, y, 5, 1, col); rect(c, x, y - 2, 1, 5, col) }
+            }
+        }
+
+        // checkered floor
+        rect(c, 3, feet - 4, W - 6, 3, argb(0xFFB89968))
+        var ty = feet - 1
+        var row = 0
+        while (ty < lh - 3) {
+            val h = minOf(8, lh - 3 - ty)
+            var tx = 3
+            var k = 0
+            while (tx < W - 3) {
+                val w = minOf(8, W - 3 - tx)
+                rect(c, tx, ty, w, h, if ((k + row) % 2 == 0) argb(0xFFE6D5B8) else argb(0xFFEFE2C8))
+                tx += 8
+                k++
+            }
+            ty += 8
+            row++
+        }
+
+        // logo
+        outlineText(c, "RETRO", (W - textW("RETRO", 4)) / 2, 20, RED, 4, 1)
+        outlineText(c, "CAT", (W - textW("CAT", 7)) / 2, 46, ORANGE, 7, 2)
+        textCenter(c, "8-BIT VIRTUAL PET", 88, MUTED)
+
+        // the cat hops on every beat (150 BPM = one beat per 4 ticks), in the player's own fur colour
+        val set = Art.cat
+        val s = 3
+        val beat = tickCount % 4
+        val hop = if (beat < 2) 3 else 0
+        val x = (W - set.base.w * s) / 2
+        val y = feet - set.base.h * s + 2 - hop
+        val flip = (tickCount / 16) % 2 == 1
+        val face = when {
+            beat < 2 -> Face.HAPPY
+            blinkLen > 0 -> Face.BLINK
+            else -> Face.NEUTRAL
+        }
+        rect(c, x + 8, feet, set.base.w * s - 16, 2, argb(0x33000000))
+        val tail = if ((tickCount / 3) % 2 == 0) set.tailA else set.tailB
+        tail.draw(c, x, y, paint, palCat(), flip, s)
+        set.base.draw(c, x, y, paint, palCat(), flip, s)
+        set.faces[face].draw(c, x, y, paint, palCat(), flip, s)
+
+        // floating music notes
+        for (n in notes) noteSprite.draw(c, n.x.toInt(), n.y.toInt(), paint, palInk)
+
+        // "tap to start" plate
+        val py = lh - 40
+        frame(c, 8, py, 104, 16, WHITE, INK)
+        if ((tickCount / 5) % 2 == 0) textCenter(c, "TAP TO START", py + 3, INK, 2)
+
+        // retro cabinet border
+        rect(c, 0, 0, W, 2, INK)
+        rect(c, 0, lh - 2, W, 2, INK)
+        rect(c, 0, 0, 2, lh, INK)
+        rect(c, W - 2, 0, 2, lh, INK)
+        rect(c, 2, 2, W - 4, 1, ORANGE)
+        rect(c, 2, lh - 3, W - 4, 1, ORANGE)
+        rect(c, 2, 2, 1, lh - 4, ORANGE)
+        rect(c, W - 3, 2, 1, lh - 4, ORANGE)
+
+        (if (pet.soundOn) Art.SPK_ON else Art.SPK_OFF).draw(c, W - 15, 6, paint, palInk)
     }
 
     // ------------------------------------------------------------- adoption screen
